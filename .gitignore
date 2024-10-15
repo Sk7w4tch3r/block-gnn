@@ -2,3 +2,8 @@
 /archive
 /checkpoints
 __pycache__/
+*.egg-info/
+*.egg
+*.pyc
+sgrid/
+build/
