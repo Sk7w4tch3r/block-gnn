@@ -1,10 +1,11 @@
+import types
 import torch
 import torch.nn as nn
 from utils import implements, image_to_adj
 
 
 
-# this class and the next class implementation assume the shape of the input is at most (out_channels, in_channels, kernel_size, kernel_size)
+# this class and the next class implementation assume the shape of the input is at most (out_channels, in_channels, kernel_size, kernel_size) not any more :)
 class SemiRegSpraseBCSR(object):
     """
     Semi-Regular Sparse Block Compressed Sparse Row matrix
@@ -12,7 +13,7 @@ class SemiRegSpraseBCSR(object):
         - for a general case of matmul, nonzero should be implemented/overridden
     """
     def __init__(self, shape, ptr, indices, data, blocks):
-        assert shape[0] == shape[1], "Only square matrices are supported"
+        # assert shape[0] == shape[1], "Only square matrices are supported"
         self._shape = shape # block matrix shape
 
         self.ptr = ptr
@@ -21,7 +22,8 @@ class SemiRegSpraseBCSR(object):
 
         self.blocks = blocks
         self.block_size = blocks.shape[-1]
-        self.shape = torch.Size(list(self.blocks.shape[:-3]) + [self.block_size**2, self.block_size**2]) # dense matrix shape
+        self.shape = torch.Size(list(self.blocks.shape[:-3]) + [self.block_size*self._shape[0], self.block_size*self._shape[1]]) # dense matrix shape
+        self.device = blocks.device
 
 
     def to_dense(self): # TODO: imeplement the general case (not all the stacked matrices are alike)
@@ -33,23 +35,11 @@ class SemiRegSpraseBCSR(object):
         return res
 
 
-    def _get_block(self, i, j, channels=None):
+    def _get_block(self, i, j):
         assert i < self._shape[0] and j < self._shape[1], "Index out of bounds"
         if j in self.indices[self.ptr[i]: self.ptr[i+1]]:
             idx = self.indices[self.ptr[i]: self.ptr[i+1]].index(j) + self.ptr[i]
-            if len(self.blocks.shape) == 3:
-                return self.blocks[self.data[idx]]
-            if len(self.blocks.shape) == 5:
-                if channels is not None:
-                    if len(channels) == 2:
-                        return self.blocks[..., self.data[idx], :, :]
-                    elif len(channels) == 1:
-                        raise ValueError("Invalid number of channels")
-                        return self.blocks[channels[0]][:][self.data[idx]]
-                else:
-                    raise ValueError("Invalid number of channels")
-            elif len(self.blocks.shape) == 4:
-                return self.blocks[:, self.data[idx], :, :]
+            return self.blocks[..., self.data[idx], :, :]
     
         else:
             raise ValueError("Accessing a zero (null) block")
@@ -65,33 +55,147 @@ class SemiRegSpraseBCSR(object):
         
 
     def get_row(self, i):
-        return torch.stack([self._get_block(i, j, [0, 1]) for j in self.indices[self.ptr[i]:self.ptr[i+1]]], dim=-3) # -3 is the axis of the blocks
+        return torch.stack([self._get_block(i, j) for j in self.indices[self.ptr[i]:self.ptr[i+1]]], dim=-3) # -3 is the axis of the blocks
 
 
     def __getitem__(self, key):
-        # get block is not supported here TODO: implement it!
-        
+        # Note: Assuming every index is in normal matrix indexing space
         if not isinstance(key, tuple):
             key = (key,)
 
-        if len(self.blocks.shape) == 3:
-            if isinstance(key, int):
-                try:
-                    return SemiRegSpraseBCSR(self._shape, self.ptr, self.indices, self.data, self.blocks.unsqueeze(0)[key])
-                except:
-                    raise ValueError("Invalid index")
-            else:
-                raise ValueError("Invalid index, cannot slice a 2d block matrix")
-        elif len(self.blocks.shape) > 3:
-            assert len(self.blocks.shape) - len(key) >= 3, "Invalid number of indices"
-            return SemiRegSpraseBCSR(self._shape, self.ptr, self.indices, self.data, self.blocks[key])
-        else:
-            raise ValueError("Invalid index, meh")
-        
+        assert len(key) <= len(self.shape), "Invalid number of indices"
+
+        ellipsis_c = 0
+        i = 0
+        while i < len(key):
+            if isinstance(key[i], types.EllipsisType):
+                # add none slices for all the dimensions that are not indexed
+                # find the last and next non ellipsis index
+                ellipsis_c += 1
+                assert ellipsis_c <= 1, "Only one ellipsis is supported"
+                last = 0
+                next = len(key)
+                for j in range(i+1, len(key)):
+                    if key[j] != types.EllipsisType:
+                        next = j
+                        break
+                changed = False
+                for j in range(i-1, -1, -1):
+                    if key[j] != types.EllipsisType:
+                        last = j
+                        changed = True
+                        break
+                key = key[:last+changed] + tuple([slice(None)]*(len(self.shape) - len(key) + next-last-changed)) + key[next:]
+            if isinstance(key[i], int):
+                # print("getitem ", key[i], self.shape[i])
+                assert key[i] < self.shape[i] and key[i]+self.shape[i] >= 0, "Index out of bounds"
+                if key[i] < 0:
+                    key = key[:i] + (self.shape[i]+key[i],) + key[i+1:]
+                key = key[:i] + (key[i],) + key[i+1:]
+            elif isinstance(key[i], slice):
+                start = key[i].start if key[i].start is not None else 0
+                stop = key[i].stop if key[i].stop is not None else self.shape[i]
+                key = key[:i] + (slice(start, stop),) + key[i+1:]
+                # print("getitem ", start, stop, self.shape)
+                assert start >= 0 and start < self.shape[i] and stop > 0 and stop <= self.shape[i], "Index out of bounds"
+            i += 1
+
+
+        for i in range(len(key)): # checking the bounds
+            if isinstance(key[i], slice):
+                start = key[i].start if key[i].start is not None else 0
+                stop = key[i].stop if key[i].stop is not None else self.shape[i]
+                key = key[:i] + (slice(start, stop),) + key[i+1:]
+                assert start >= 0 and start < self.shape[i] and stop > 0 and stop <= self.shape[i], "Index out of bounds"
+
+        if len(self.shape) - len(key) >= 2: # batch slicing
+            return SemiRegSpraseBCSR(self._shape, self.ptr, self.indices, self.data, self.blocks[key].squeeze())
+        elif len(self.shape) - len(key) < 2: # block slicing
+            related = len(self.shape) - 2
+            # assert that the block shape wont be changed
+            assert key[related].start % self.block_size == 0 and key[related].stop % self.block_size == 0, "Slicing is only supported on block boundaries"
+            
+            ptr = self.ptr[key[related].start//self.block_size:(key[related].stop//self.block_size)+1]
+            indices = self.indices[ptr[0]:ptr[-1]]
+            data = self.data[ptr[0]:ptr[-1]]
+            ptr = [0] + [p-ptr[0] for p in ptr[1:]]
+            
+            if len(key) - related == 1: # row slicing
+                shape = ((key[related].stop-key[related].start) // self.block_size, self._shape[1])
+                new_ptr = ptr
+                new_indices = indices
+                new_data = data
+            else: # row and column slicing
+                assert key[related+1].start % self.block_size == 0 and key[related+1].stop % self.block_size == 0, "Slicing is only supported on block boundaries"
+                shape = ((key[related].stop-key[related].start) // self.block_size, (key[related+1].stop-key[related+1].start) // self.block_size)
+                
+                # slice the columns
+                new_indices = []
+                new_data = []
+                new_ptr = [0]
+                for idx in range(len(ptr)-1):
+                    col_indices = indices[ptr[idx]:ptr[idx+1]]
+                    col_data = data[ptr[idx]:ptr[idx+1]]
+
+                    temp_indices = []
+                    temp_data = []
+                    
+                    start = key[related+1].start // self.block_size
+                    stop = key[related+1].stop // self.block_size
+                    
+                    for i in range(len(col_indices)):
+                        if col_indices[i] >= start and col_indices[i] < stop:
+                            temp_indices.append(col_indices[i] - start)
+                            temp_data.append(col_data[i])
+                    
+                    new_indices.extend(temp_indices)
+                    new_ptr.append(len(temp_indices)+new_ptr[-1])
+                    new_data.extend(temp_data)
+
+            return SemiRegSpraseBCSR(shape, new_ptr, new_indices, new_data, self.blocks[key[:related]])            
+
 
     def __repr__(self) -> str:
         return f"Sparse Block Compressed Sparse Row matrix of shape {self._shape} and block size {self.block_size}"
 
+
+    @implements(torch.stack)
+    def stack(tensors, dim: int, device='cuda'):
+        assert dim==0, "Only dim=0 is supported"
+        print("here in stack")
+        shape = tensors[0]._shape
+        ptr = tensors[0].ptr
+        indices = tensors[0].indices
+        data = tensors[0].data
+        blocks = torch.stack([t.blocks for t in tensors], dim=-4)
+        return SemiRegSpraseBCSR(shape, ptr, indices, data, blocks)
+
+    def matmul(self, other):
+        assert self.shape[-2] == other.shape[-1], "Matrix multiplication is only possible with compatible shapes"
+        res = torch.zeros((*self.shape[:-2], other.shape[-1], other.shape[-1]), device=self.device)
+
+        for s in range(self.shape[-2]//self.block_size): # iterate over the rows of self
+            idxs = self.indices[self.ptr[s]:self.ptr[s+1]]
+            a = self.get_row(s)
+            for o in range(other.shape[-1]//self.block_size): # iterate over the columns of other
+                b = other[..., o*self.block_size:(o+1)*self.block_size]
+                b = torch.stack([b[..., id*self.block_size:(id+1)*self.block_size, :].to_dense() for id in idxs], dim=-3)
+                temp = torch.matmul(a, b)
+                res[..., s*self.block_size:(s+1)*self.block_size, o*self.block_size:(o+1)*self.block_size] = torch.sum(temp, dim=-3)
+
+        return res
+
+
+    @classmethod
+    def __torch_function__(cls, func, types, args=(), kwargs=None):
+        if kwargs is None:
+            kwargs = {}
+        if func not in HANDLED_FUNCTIONS:
+            return NotImplemented
+        
+        if func == torch.stack:
+            return cls.stack(*args, **kwargs)
+        
 
 HANDLED_FUNCTIONS = {
     torch.matmul: "matmul",
