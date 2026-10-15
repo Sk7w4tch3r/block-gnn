@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "block-gnn"
-version = "0.2.0"
-description = "Compile frozen PyTorch Conv2d layers into sparse inference operators"
+version = "0.3.0"
+description = "Compile frozen Conv2d layers into sparse and custom CUDA inference operators"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
@@ -30,12 +30,15 @@ dev = ["pytest>=8", "ruff>=0.6"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-block_gnn = ["csrc/*.cpp"]
+block_gnn = ["csrc/*.cpp", "csrc/*.cu"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
-markers = ["cpp: compiles and exercises the optional LibTorch extension"]
+markers = [
+  "cpp: compiles and exercises the optional LibTorch extension",
+  "cuda: requires a CUDA GPU and toolkit",
+]
 
 [tool.ruff]
 line-length = 100

@@ -84,7 +84,7 @@ A useful custom kernel would fuse edge traversal, relation lookup, channel
 mixing, and reduction without materializing the expanded CSR values. That is
 the main future optimization suggested by the negative high-channel CSR result.
 
-## C++/LibTorch reference kernel
+## C++/LibTorch and CUDA kernels
 
 The bundled C++ operator demonstrates the mechanics of extending PyTorch:
 
@@ -97,8 +97,23 @@ The bundled C++ operator demonstrates the mechanics of extending PyTorch:
 
 It directly evaluates the repeated stencil and is numerically exact against
 `Conv2d` within floating-point tolerance. Profiling shows that its simple loop
-nest only wins for very small single-filter cases. That establishes a tested
-reference point for future vectorization, prepacking, and CUDA/Triton work.
+nest only wins for very small single-filter CPU cases.
+
+The CUDA library registers two implementations under the same dispatcher
+namespace:
+
+1. **Direct grid-stride kernel.** Each CUDA thread owns one NCHW output element
+   and loops over input channels and kernel coordinates. It avoids expanded CSR
+   storage and minimizes setup for low-work inference.
+2. **Shared-memory tiled kernel.** A 16×16 output tile cooperatively loads its
+   input region and halo, then reuses those values across neighboring outputs.
+   The current specialization handles `1→1`, stride-one, dilation-one filters.
+
+Both kernels use the current PyTorch CUDA stream, `CUDAGuard`, checked launches,
+and accumulation types appropriate to float32, float64, and float16. The direct
+kernel reaches 2.29× over cuDNN in the measured low-work regime; it loses once
+channel reuse and tensor-core-friendly computation dominate. The tiled kernel
+extends the single-filter crossover through the tested 64×64 input.
 
 ## Backend-selection direction
 
@@ -106,7 +121,9 @@ The results suggest a shape-aware policy rather than a replacement operator:
 
 - native `Conv2d` for single samples and channel-rich layers;
 - CSR for batched, very low-channel filters when measured to win;
-- a future repeated-relation kernel where CSR expansion dominates memory;
+- direct CUDA for launch-bound, low-work layers;
+- tiled CUDA for measured single-filter shapes;
+- a future channel-tiled/relation-typed kernel where CSR expansion dominates;
 - conversion refused when expected storage exceeds a configured budget.
 
 A production implementation would benchmark/cache the choice by device, dtype,

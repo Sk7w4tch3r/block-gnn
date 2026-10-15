@@ -87,6 +87,9 @@ TORCH_LIBRARY(block_gnn, m) {
   m.def(
       "stencil_conv2d(Tensor input, Tensor weight, Tensor? bias, "
       "int padding_h, int padding_w) -> Tensor");
+  m.def(
+      "stencil_conv2d_tiled(Tensor input, Tensor weight, Tensor? bias, "
+      "int padding_h, int padding_w) -> Tensor");
 }
 
 TORCH_LIBRARY_IMPL(block_gnn, CPU, m) {
