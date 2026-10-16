@@ -54,6 +54,15 @@ overhead; cuDNN retakes the lead as arithmetic intensity and channel count grow.
 The CUDA CSR/cuSPARSE path lost every measured GPU case. Full data are in
 [`rtx3060-pytorch-2.11-cuda.json`](benchmarks/results/rtx3060-pytorch-2.11-cuda.json).
 
+## Visual walkthrough
+
+![A trained convolution compiled into a sparse operator, with repeated weights shown in color.](docs/figures/01_frozen_operator.png)
+
+The [five-figure walkthrough](docs/figures/README.md) explains the CUDA execution,
+CPU/GPU crossover, and memory trade-off. Download the
+[PDF carousel](docs/figures/block_gnn_carousel.pdf) or regenerate the PNG/SVG
+figures from the saved benchmark JSON with `python benchmarks/render_figures.py`.
+
 ## Use it
 
 ```bash

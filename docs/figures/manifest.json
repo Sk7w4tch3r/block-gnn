@@ -1,0 +1,16 @@
+{
+  "sources": {
+    "benchmarks/results/i7-12700k-pytorch-2.11-threads1.json": "1084a3b47b3c168481b205ff40919a4690759e1742a59b919f4e789a80bf6175",
+    "benchmarks/results/rtx3060-pytorch-2.11-cuda.json": "23b6e5f16a8943d4927b7d592b6dd68bac574246f2e4bf38622beb5960c72800"
+  },
+  "generator": "benchmarks/render_figures.py",
+  "matplotlib": "3.11.1",
+  "pages": [
+    "01_frozen_operator",
+    "02_cuda_execution",
+    "03_cpu_crossover",
+    "04_cuda_crossover",
+    "05_memory_tradeoff"
+  ],
+  "timing_scope": "Existing eager operator benchmark records; no new measurements."
+}

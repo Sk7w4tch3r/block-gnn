@@ -1,0 +1,25 @@
+Can changing how a trained convolution executes make inference faster?
+
+I started exploring this question in 2024 with Block GNN. I've now revisited the project with a tested PyTorch implementation, custom C++/CUDA operators, and reproducible CPU/GPU benchmarks.
+
+The idea: at a fixed input shape, a convolution is a sparse linear map. Copy the trained weights into that operator once, then reuse it for inference. The weights stay fixed; no retraining is required.
+
+I explored two execution approaches:
+• Compile Conv2d into CSR and use sparse matrix multiplication.
+• Compute the same neighborhoods directly with CUDA, including a shared-memory tiled specialization.
+
+Some measured results:
+• CPU CSR: 3.22× over eager Conv2d for a batch of 32 single-channel, single-filter 8×8 inputs on an i7-12700K, using one CPU thread.
+• Tiled CUDA: 2.30× over the cuDNN-backed baseline for batch 32, 1→1 channels, 28×28 inputs on an RTX 3060.
+• Direct CUDA: 2.29× for batch 1, 1→32 channels, 28×28 inputs on the same GPU.
+
+The losing cases taught me just as much. cuDNN wins on the larger batched, multi-channel workloads, and CSR lost every GPU case I tested. Explicit CSR also repeats weights: a 1→32 layer at 28×28 expands 1.25 KiB of weights and bias into 1.74 MiB of operator storage.
+
+These are float32 operator benchmarks using seeded synthetic inputs and weights, with warm-up and nine timing groups. CUDA timings use events around eager launches and can include host launch gaps. They are specific to these workloads and hardware, not end-to-end model speedups.
+
+The carousel explains the transformation, both CUDA kernels, the performance crossover, and the memory trade-off. Code, tests, raw measurements, and reproduction commands are in the repo:
+https://github.com/Sk7w4tch3r/block-gnn
+
+Next, I'm interested in representing repeated topology and weights compactly, and eventually returning to the original GNN classification direction.
+
+#PyTorch #CUDA #MLSystems #InferenceOptimization

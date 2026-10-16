@@ -1,5 +1,9 @@
 # Empirical report
 
+The [visual walkthrough](figures/README.md) plots these saved measurements and
+explains the operator transformation and CUDA execution. All measured shapes,
+including slower cases, appear in the CPU and GPU crossover figures.
+
 ## Claim
 
 Compiling a fixed convolution into CSR can reduce CPU inference latency for
@@ -80,7 +84,11 @@ IQR, call-count, nonzero-count, compilation-time, and storage data are in
 - isolation: every shape runs in a fresh subprocess
 - correctness: `torch.allclose(atol=3e-5, rtol=1e-5)` before timing
 
-CUDA latency includes complete PyTorch operator dispatch and output allocation.
+CUDA timing uses events around repeated eager operator calls. The measured
+stream interval can include gaps while the host enqueues work; it is not an
+isolated measurement of kernel execution or end-to-end application latency.
+The calls allocate their outputs. The benchmark uses seeded synthetic inputs
+and weights rather than a trained checkpoint or a full model accuracy study.
 Extension compilation and CSR construction/device transfer are outside the hot
 path. The direct kernel executes one output element per CUDA thread. The tiled
 kernel loads an input tile plus halo into shared memory and currently supports
