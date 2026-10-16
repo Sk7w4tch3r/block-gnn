@@ -7,6 +7,7 @@ Requires matplotlib and numpy; no GPU or model execution is needed.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from pathlib import Path
 
@@ -374,7 +375,11 @@ def main():
     ) as pdf:
         for name, fig in figures:
             fig.savefig(OUT / f"{name}.png", dpi=160)
-            fig.savefig(OUT / f"{name}.svg")
+            svg = io.StringIO()
+            fig.savefig(svg, format="svg")
+            (OUT / f"{name}.svg").write_text(
+                "\n".join(line.rstrip() for line in svg.getvalue().splitlines()) + "\n"
+            )
             pdf.savefig(fig)
             plt.close(fig)
     manifest = {
